@@ -31,6 +31,9 @@ class Sense(object):
     
         
 class Synset(object):
+    """
+    Synser class
+    """
     def __init__(self,
                  id,
                  ruthes_name,
@@ -53,7 +56,15 @@ class Synset(object):
         
         
 class RuWordNet(object):
+    """
+    Thesaurus class
+    """
     def __init__(self, ruwordnet_path):
+        '''
+        Thesaurus loading
+        Args:
+            ruwordnet_path: string, path to thesaurus directory
+        '''
         self.ruwordnet_path = ruwordnet_path
         self.id2sense = {}
         self.id2synset = {}
@@ -61,7 +72,11 @@ class RuWordNet(object):
         self.__load_senses_and_synsets()
         self.__load_relations()
     
+
     def __load_senses_and_synsets(self):
+        '''
+        Load all thesaurus Senses and Synsets.
+        '''
         n_senses_path = os.path.join(self.ruwordnet_path, "senses.N.xml")
         v_senses_path = os.path.join(self.ruwordnet_path, "senses.V.xml")
         a_senses_path = os.path.join(self.ruwordnet_path, "senses.A.xml")
@@ -93,10 +108,12 @@ class RuWordNet(object):
                     
         self.get_stat()
         
+
     def __load_relations(self):
-        """
+        '''
+        Load thesaurus relations.
         Only hypernymy loading today
-        """
+        '''
         n_relations_path = os.path.join(self.ruwordnet_path, "synset_relations.N.xml")
         v_relations_path = os.path.join(self.ruwordnet_path, "synset_relations.V.xml")
         a_relations_path = os.path.join(self.ruwordnet_path, "synset_relations.A.xml")
@@ -116,30 +133,109 @@ class RuWordNet(object):
                 child_id = value.attrib["child_id"]
                 relation_name = value.attrib["name"]
                 
-                if relation_name == "hypernym":
+                if relation_name == "hypernym" or relation_name == "instance hypernym":
                     self.id2synset[child_id].hypernym_for.append(parent_id)
                     self.id2synset[parent_id].hyponym_for.append(child_id)
-                    
+    
+
     def get_synsets(self, part_of_speech=None):
+        '''
+        Returns all thesaurus synsets
+        Args:
+            part_of_speech: string, filter by part of speech
+
+        Returns:
+            List of thesaurus Synset objects.
+        '''
         synsets = []
         for synset in self.id2synset.values():
             if part_of_speech is not None and synset.part_of_speech not in part_of_speech:
                 continue
             synsets.append(deepcopy(synset))
         return synsets
-    
-    def get_synset(synset_id):
-        if synset_id in self.id2synset:
-            return self.id2synset[synset_id]
-        return None
-                
+                    
+
     def get_stat(self):
         print("Number of senses: {}".format(len(self.id2sense)))
         print("Number of synsets: {}".format(len(self.id2synset)))
         
+
     def get_roots(self):
+        '''
+        Get all root synsets.
+        Root synset has no hyperonyms, but has hyponyms
+
+        Returns:
+            List of thesaurus root Synset objects.
+        '''
         root_synsets = []
         for synset_id, synset in self.id2synset.items():
             if len(synset.hyponym_for) == 0 and len(synset.hypernym_for) != 0:
                 root_synsets.append(deepcopy(synset))
         return root_synsets
+    
+
+    def get_tree(self, root_synset_id):
+        '''
+        Get a hyponyms tree for root synset.
+        Tree is represented as a hierarchy of dictionaries
+        Args:
+            root_synset_id: string
+        Returns:
+            hierarchy of dictionaries from synset id
+        '''
+        vert_name = self.id2synset[root_synset_id].ruthes_name
+        tree = {vert_name:{}}
+        for synset_id in self.id2synset[root_synset_id].hypernym_for:
+            tree[vert_name].update(self.get_tree(synset_id))
+        return tree
+    
+
+    def get_child_ids(self, root_synset_id):
+        child_ids = []
+        for synset_id in self.id2synset[root_synset_id].hypernym_for:
+            child_ids += [synset_id] + self.get_child_ids(synset_id)
+        return child_ids
+    
+
+    def get_synsets_without_relations(self):
+        synsets_without_relations = []
+        for synset_id, synset in self.id2synset.items():
+            if len(synset.hyponym_for) == 0 and len(synset.hypernym_for) == 0:
+                synsets_without_relations.append(deepcopy(synset))
+        return synsets_without_relations
+    
+
+    def get_connect_components(self):
+        component_roots = [set([root.id]) for root in self.get_roots()]
+        component_set_ids = [set([child_id for root in root_set for child_id in self.get_child_ids(root)])\
+                             for root_set in component_roots]
+        
+        while True:
+            new_component_roots = []
+            new_component_set_ids = []
+        
+            for idx_1, component_root_1 in enumerate(component_roots):
+                changed = False
+                for idx_2, component_root_2 in enumerate(component_roots[idx_1 + 1:]):
+                    if len(component_set_ids[idx_1].intersection(component_set_ids[idx_1 + 1 + idx_2])) > 0:
+
+                        new_component_roots.append(component_root_1.union(component_root_2))
+                        new_component_roots += component_roots[idx_1 + 1:idx_1 + 1 + idx_2]
+                        new_component_roots += component_roots[idx_1 + 1 + idx_2 + 1:]
+                        changed = True
+                        break
+                if changed:
+                    break
+                new_component_roots.append(component_root_1)
+            if len(component_roots) == len(new_component_roots):
+                break
+            else:
+                component_roots = deepcopy(new_component_roots)
+                component_set_ids = [
+                    set([child_id for root in root_set 
+                            for child_id in self.get_child_ids(root)])
+                    for root_set in component_roots
+                ]
+                
+        return component_roots
